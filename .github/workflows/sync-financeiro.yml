@@ -1,0 +1,38 @@
+name: Sincronizar financeiro
+on:
+  schedule:
+    - cron: '7 * * * *'      # todo começo de hora (minuto 7 evita o horário de pico do GitHub)
+  workflow_dispatch: {}       # botão "Run workflow" para rodar na hora
+concurrency:
+  group: sync-financeiro
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sync/requirements.txt
+      - run: pip install -r sync/requirements.txt
+      - name: Buscar extrato e atualizar fin.enc
+        env:
+          FIN_PASSWORD: ${{ secrets.FIN_PASSWORD }}
+          MCP_CLIENT_ID: ${{ secrets.MCP_CLIENT_ID }}
+          MCP_REFRESH_TOKEN: ${{ secrets.MCP_REFRESH_TOKEN }}
+        run: python sync/sync.py
+      - name: Guardar se mudou
+        if: always()
+        run: |
+          git config user.name "cerebro-sync"
+          git config user.email "cerebro-sync@users.noreply.github.com"
+          git add fin.enc sync/estado.enc 2>/dev/null || true
+          if git diff --cached --quiet; then echo "Nada novo para guardar."; exit 0; fi
+          git commit -m "financeiro: atualização automática [skip render]"
+          git pull --rebase -q || true
+          git push
