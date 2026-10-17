@@ -1,0 +1,47 @@
+name: Sincronizar calendario
+on:
+  schedule:
+    - cron: '17,47 * * * *'   # duas vezes por hora (minutos 17 e 47 evitam o horário de pico do GitHub)
+  workflow_dispatch: {}        # botão "Run workflow" para rodar na hora
+concurrency:
+  group: sync-feeds
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  feeds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sync/requirements.txt
+      - run: pip install -r sync/requirements.txt
+      - name: Preparar o ramo dados
+        run: |
+          git config --global user.name "headvinci-feeds"
+          git config --global user.email "headvinci-feeds@users.noreply.github.com"
+          REMOTE="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$REMOTE" dados >/dev/null 2>&1; then
+            git clone --depth 1 --branch dados "$REMOTE" dados
+          else
+            mkdir dados && cd dados && git init -q -b dados && git remote add origin "$REMOTE"
+          fi
+      - name: Ler o Google Agenda e gravar agenda.enc
+        env:
+          FIN_PASSWORD: ${{ secrets.FIN_PASSWORD }}
+          CAL_ICS_URL: ${{ secrets.CAL_ICS_URL }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+          FEEDS_DIR: dados
+        run: python sync/feeds.py
+      - name: Guardar se mudou
+        run: |
+          cd dados
+          git add -A
+          if git diff --cached --quiet; then echo "Nada novo para guardar."; exit 0; fi
+          git commit -q -m "agenda: atualização automática [skip render]"
+          git pull --rebase -q origin dados || true
+          git push -q origin HEAD:dados
