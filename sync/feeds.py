@@ -259,7 +259,7 @@ def baixar_ics(url, sessao=None):
 
 
 def main():
-    senha, url = os.environ.get('FIN_PASSWORD'), os.environ.get('CAL_ICS_URL')
+    senha, url = os.environ.get('FIN_PASSWORD'), (os.environ.get('CAL_ICS_URL') or '').strip()
     if not (senha and url):
         print('ERRO: faltam os segredos FIN_PASSWORD e/ou CAL_ICS_URL no repositório.')
         return 2
@@ -278,7 +278,7 @@ def main():
     except Exception as e:
         print('ERRO ao baixar o calendário: %s' % e)
         return 3
-    novo = montar(ics, os.environ.get('FOOTBALL_DATA_KEY') or None, antigo)
+    novo = montar(ics, (os.environ.get('FOOTBALL_DATA_KEY') or '').strip() or None, antigo)
     print('Eventos: %d · jogos do Corinthians: %d' % (len(novo['eventos']), len(novo['jogos'])))
     fb = novo.get('futebol')
     if fb:
