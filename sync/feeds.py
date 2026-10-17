@@ -258,6 +258,22 @@ def baixar_ics(url, sessao=None):
     return txt
 
 
+def forma_do_endereco(url):
+    """Descreve o endereço sem revelar o trecho secreto (só pistas de formato)."""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(url)
+    except Exception:
+        return 'não foi possível interpretar'
+    caminho = u.path or ''
+    return ('começa com https: %s · site: %s · caminho começa com /calendar/ical/: %s · '
+            'tem "/private-": %s · tem "/public/": %s · termina em basic.ics: %s · '
+            'tem espaço ou aspas: %s · tamanho: %d caracteres') % (
+        url.startswith('https://'), u.netloc or '(vazio)', caminho.startswith('/calendar/ical/'),
+        '/private-' in caminho, '/public/' in caminho, caminho.endswith('basic.ics'),
+        any(c in url for c in ' "\''), len(url))
+
+
 def main():
     senha, url = os.environ.get('FIN_PASSWORD'), (os.environ.get('CAL_ICS_URL') or '').strip()
     if not (senha and url):
@@ -277,6 +293,7 @@ def main():
         ics = baixar_ics(url)
     except Exception as e:
         print('ERRO ao baixar o calendário: %s' % e)
+        print('Formato do endereço guardado (sem mostrar nada secreto): ' + forma_do_endereco(url))
         return 3
     novo = montar(ics, (os.environ.get('FOOTBALL_DATA_KEY') or '').strip() or None, antigo)
     print('Eventos: %d · jogos do Corinthians: %d' % (len(novo['eventos']), len(novo['jogos'])))
