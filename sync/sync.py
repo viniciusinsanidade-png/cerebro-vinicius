@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Robô do Financeiro do Cérebro: busca o extrato, categoriza com regras fixas e grava fin.enc (criptografado).
 Roda de hora em hora no GitHub Actions. Não usa IA. Variáveis: FIN_PASSWORD, MCP_CLIENT_ID, MCP_REFRESH_TOKEN."""
-import json, os, sys, argparse
+import json, os, sys, argparse, time
+import mcp_client
 from datetime import datetime, timedelta, timezone
 
 from categorize import para_item, aliases_extra, mes_de, MESES
@@ -111,7 +112,8 @@ def main():
     except Exception:
         estado = {}                            # estado.enc velho (senha trocada): ignora e usa o segredo
     rt = estado.get('refresh_token') or rt0
-    try:
+    def renovar():
+        """Renova o login e guarda tudo já (token novo + validade do access token). Devolve (access, refresh)."""
         try:
             token, rt_novo = renovar_token(cid, rt)
         except ErroAuth:
@@ -119,7 +121,36 @@ def main():
                 token, rt_novo = renovar_token(cid, rt0)
             else:
                 raise
-        mcp = MCP(token); mcp.iniciar()
+        if not a.check:
+            novo = {'refresh_token': rt_novo}
+            if mcp_client.EXPIRA_EM:
+                novo['access_token'] = token
+                novo['access_exp'] = int(time.time()) + mcp_client.EXPIRA_EM
+            try:
+                gravar(ESTADO_ARQ, novo, senha, k)     # guarda já: se algo falhar depois, a corrente não se perde
+                print('Token renovado e guardado.')
+            except Exception as e:
+                print('AVISO: não consegui guardar o token novo agora:', e.__class__.__name__)
+        return token, rt_novo
+    try:
+        # reaproveita o access token guardado enquanto ele vale: menos renovações = menos risco de perder a corrente
+        usado_guardado = False
+        at, ex = estado.get('access_token'), int(estado.get('access_exp') or 0)
+        if at and ex - time.time() > 300 and not a.check:
+            token, rt_novo = at, rt
+            usado_guardado = True
+            print('Reaproveitando o access token guardado (vale por mais %d min).' % ((ex - time.time()) // 60))
+        else:
+            token, rt_novo = renovar()
+        mcp = MCP(token)
+        try:
+            mcp.iniciar()
+        except ErroAuth:
+            if not usado_guardado:
+                raise
+            print('O access token guardado foi recusado; renovando.')
+            token, rt_novo = renovar()
+            mcp = MCP(token); mcp.iniciar()
         hoje = agora().strftime('%Y-%m-%d')
         try:
             dados = ler(FIN_ARQ, senha, k)
@@ -167,9 +198,6 @@ def main():
         print('Gravado: %d novos, %d antigos ligados ao banco. %d lançamentos a revisar.' % (len(novos), marcados, len(revisar)))
     else:
         print('Sem novidades. Nada a gravar.')
-    if rt_novo != estado.get('refresh_token') and rt_novo != rt0:
-        gravar(ESTADO_ARQ, {'refresh_token': rt_novo}, senha, k)
-        print('Token renovado e guardado.')
     if aviso:
         print('AVISO:', aviso)
         return 5                                # falha visível no GitHub (e-mail de alerta)

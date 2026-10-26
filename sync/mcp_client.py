@@ -12,18 +12,37 @@ class ErroMCP(Exception):
 class ErroAuth(ErroMCP):
     pass
 
+EXPIRA_EM = 0   # segundos de validade do último access token renovado (0 = desconhecido)
+
 def renovar_token(client_id, refresh_token):
-    """Troca o refresh token por um access token novo. Devolve (access_token, refresh_token_atual)."""
-    try:
-        r = requests.post(TOKEN_URL, data={'grant_type': 'refresh_token', 'refresh_token': refresh_token,
-                                           'client_id': client_id}, timeout=30)
-    except requests.RequestException as e:
-        raise ErroMCP('Sem conexão com o login do Banco MCP: %s' % e.__class__.__name__)
+    """Troca o refresh token por um access token novo. Devolve (access_token, refresh_token_atual).
+    Tenta de novo em caso de timeout/queda (o servidor pode estar lento). Se a 1ª tentativa deu timeout e a 2ª
+    é recusada, é provável que o servidor tenha renovado e a resposta se perdeu: o aviso diz isso."""
+    global EXPIRA_EM
+    r = None; houve_timeout = False; ultimo = ''
+    for tentativa in range(3):
+        try:
+            r = requests.post(TOKEN_URL, data={'grant_type': 'refresh_token', 'refresh_token': refresh_token,
+                                               'client_id': client_id}, timeout=(10, 90))
+        except requests.RequestException as e:
+            houve_timeout = True; ultimo = e.__class__.__name__; r = None
+            time.sleep(3 * (tentativa + 1)); continue
+        if r.status_code >= 500:
+            houve_timeout = True; ultimo = 'HTTP %s' % r.status_code; time.sleep(3 * (tentativa + 1)); continue
+        break
+    if r is None:
+        raise ErroMCP('Sem conexão com o login do Banco MCP: %s' % ultimo)
     if r.status_code in (400, 401):
-        raise ErroAuth('Login do Banco MCP recusado (%s): %s' % (r.status_code, r.text[:200]))
+        extra = (' (houve timeout antes: o servidor pode ter renovado o token e a resposta se perdeu; '
+                 'rode login.py de novo)') if houve_timeout else ''
+        raise ErroAuth('Login do Banco MCP recusado (%s): %s%s' % (r.status_code, r.text[:200], extra))
     if r.status_code >= 400:
         raise ErroMCP('Login do Banco MCP respondeu %s: %s' % (r.status_code, r.text[:200]))
     j = r.json()
+    try:
+        EXPIRA_EM = int(j.get('expires_in') or 0)
+    except (TypeError, ValueError):
+        EXPIRA_EM = 0
     return j['access_token'], j.get('refresh_token') or refresh_token
 
 class MCP:
